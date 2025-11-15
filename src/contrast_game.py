@@ -1,0 +1,403 @@
+"""
+コントラスト - 2人対戦ボードゲーム
+5x5の盤面で、タイルの色によって移動方向が変化する戦略的なゲーム
+"""
+
+from enum import Enum
+from typing import List, Tuple, Optional, Set
+import copy
+
+
+class TileColor(Enum):
+    """タイルの色"""
+    WHITE = "white"    # 白：縦横移動
+    BLACK = "black"    # 黒：斜め移動
+    GRAY = "gray"      # グレー：全方向移動
+
+
+class Player(Enum):
+    """プレイヤー"""
+    PLAYER1 = 1
+    PLAYER2 = 2
+
+
+class Piece:
+    """コマ"""
+    
+    def __init__(self, owner: Player):
+        """
+        Args:
+            owner: コマの所有者
+        """
+        self.owner = owner
+    
+    def __repr__(self):
+        return f"Piece(P{self.owner.value})"
+
+
+class Board:
+    """ゲームボード（5x5）"""
+    
+    def __init__(self, size: int = 5):
+        """
+        Args:
+            size: ボードのサイズ（size x size）
+        """
+        self.size = size
+        # 全マスは初期状態で白
+        self.tiles: List[List[TileColor]] = [[TileColor.WHITE for _ in range(size)] for _ in range(size)]
+        
+        # コマの配置（初期状態は空）
+        self.pieces: List[List[Optional[Piece]]] = [[None for _ in range(size)] for _ in range(size)]
+    
+    def get_tile_color(self, x: int, y: int) -> TileColor:
+        """指定位置のタイル色を取得"""
+        if 0 <= x < self.size and 0 <= y < self.size:
+            return self.tiles[y][x]
+        raise ValueError(f"Invalid position: ({x}, {y})")
+    
+    def set_tile_color(self, x: int, y: int, color: TileColor) -> bool:
+        """
+        タイルの色を設定する
+        
+        Args:
+            x, y: 位置
+            color: タイルの色
+            
+        Returns:
+            設定に成功したかどうか
+        """
+        if 0 <= x < self.size and 0 <= y < self.size:
+            self.tiles[y][x] = color
+            return True
+        return False
+    
+    def place_piece(self, x: int, y: int, piece: Piece) -> bool:
+        """
+        コマを配置する
+        
+        Args:
+            x, y: 配置位置
+            piece: 配置するコマ
+            
+        Returns:
+            配置に成功したかどうか
+        """
+        if 0 <= x < self.size and 0 <= y < self.size:
+            if self.pieces[y][x] is None:
+                self.pieces[y][x] = piece
+                return True
+        return False
+    
+    def get_piece(self, x: int, y: int) -> Optional[Piece]:
+        """指定位置のコマを取得"""
+        if 0 <= x < self.size and 0 <= y < self.size:
+            return self.pieces[y][x]
+        return None
+    
+    def move_piece(self, from_x: int, from_y: int, to_x: int, to_y: int) -> bool:
+        """
+        コマを移動する
+        
+        Args:
+            from_x, from_y: 移動元の位置
+            to_x, to_y: 移動先の位置
+            
+        Returns:
+            移動に成功したかどうか
+        """
+        piece = self.get_piece(from_x, from_y)
+        if piece is None:
+            return False
+        
+        if 0 <= to_x < self.size and 0 <= to_y < self.size:
+            self.pieces[to_y][to_x] = piece
+            self.pieces[from_y][from_x] = None
+            return True
+        return False
+    
+    def remove_piece(self, x: int, y: int):
+        """コマを盤から取り除く"""
+        if 0 <= x < self.size and 0 <= y < self.size:
+            self.pieces[y][x] = None
+    
+    def display(self):
+        """ボードの状態を表示"""
+        print("  ", end="")
+        for i in range(self.size):
+            print(f" {i} ", end="")
+        print()
+        
+        for y in range(self.size):
+            print(f"{y} ", end="")
+            for x in range(self.size):
+                piece = self.pieces[y][x]
+                tile_color = self.tiles[y][x]
+                
+                if piece is None:
+                    # タイルの色に応じて表示
+                    if tile_color == TileColor.WHITE:
+                        print("[□]", end="")
+                    elif tile_color == TileColor.BLACK:
+                        print("[■]", end="")
+                    else:  # GRAY
+                        print("[▦]", end="")
+                else:
+                    # コマを表示
+                    player_marker = str(piece.owner.value)
+                    if tile_color == TileColor.WHITE:
+                        print(f"[{player_marker}□]", end="")
+                    elif tile_color == TileColor.BLACK:
+                        print(f"[{player_marker}■]", end="")
+                    else:  # GRAY
+                        print(f"[{player_marker}▦]", end="")
+            print()
+
+
+
+class ContrastGame:
+    """コントラストゲームのメインクラス"""
+    
+    def __init__(self, board_size: int = 5):
+        """
+        Args:
+            board_size: ボードのサイズ
+        """
+        self.board = Board(board_size)
+        self.current_player = Player.PLAYER1
+        self.game_over = False
+        self.winner = None
+        self.move_history = []
+        
+        # プレイヤーごとのタイル所持数
+        self.tiles_remaining = {
+            Player.PLAYER1: {'black': 3, 'gray': 1},
+            Player.PLAYER2: {'black': 3, 'gray': 1}
+        }
+        
+        # 配置されたタイルの記録（座標とプレイヤー）
+        self.placed_tiles: List[Tuple[int, int, Player, TileColor]] = []
+    
+    def setup_initial_position(self):
+        """初期配置を設定（各プレイヤー5つのコマ）"""
+        # プレイヤー1の初期配置（下側・y=4）
+        for x in range(self.board.size):
+            piece = Piece(owner=Player.PLAYER1)
+            self.board.place_piece(x, 4, piece)
+        
+        # プレイヤー2の初期配置（上側・y=0）
+        for x in range(self.board.size):
+            piece = Piece(owner=Player.PLAYER2)
+            self.board.place_piece(x, 0, piece)
+    
+    def get_valid_moves(self, x: int, y: int) -> List[Tuple[int, int]]:
+        """
+        指定位置のコマが移動可能なマスのリストを取得
+        
+        Args:
+            x, y: コマの位置
+            
+        Returns:
+            移動可能な位置のリスト [(x, y), ...]
+        """
+        piece = self.board.get_piece(x, y)
+        if piece is None or piece.owner != self.current_player:
+            return []
+        
+        # 現在のマスのタイル色を取得
+        tile_color = self.board.get_tile_color(x, y)
+        
+        valid_moves = []
+        
+        if tile_color == TileColor.WHITE:
+            # 白タイル：縦横1マス
+            directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        elif tile_color == TileColor.BLACK:
+            # 黒タイル：斜め1マス
+            directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+        else:  # GRAY
+            # グレータイル：8方向すべて
+            directions = [(0, -1), (0, 1), (-1, 0), (1, 0),
+                         (-1, -1), (1, -1), (-1, 1), (1, 1)]
+        
+        for dx, dy in directions:
+            new_x, new_y = x + dx, y + dy
+            if 0 <= new_x < self.board.size and 0 <= new_y < self.board.size:
+                target_piece = self.board.get_piece(new_x, new_y)
+                # 空マスのみ移動可能（相手のコマがある場所には移動できない）
+                if target_piece is None:
+                    valid_moves.append((new_x, new_y))
+        
+        return valid_moves
+    
+    def place_tile(self, x: int, y: int, tile_color: TileColor) -> bool:
+        """
+        タイルを配置する
+        
+        Args:
+            x, y: 配置位置
+            tile_color: タイルの色
+            
+        Returns:
+            配置に成功したかどうか
+        """
+        # タイルが残っているか確認
+        tile_type = 'black' if tile_color == TileColor.BLACK else 'gray'
+        if self.tiles_remaining[self.current_player][tile_type] <= 0:
+            return False
+        
+        # タイルを配置
+        if self.board.set_tile_color(x, y, tile_color):
+            self.tiles_remaining[self.current_player][tile_type] -= 1
+            self.placed_tiles.append((x, y, self.current_player, tile_color))
+            return True
+        
+        return False
+    
+    def make_move(self, from_x: int, from_y: int, to_x: int, to_y: int,
+                  place_tile: bool = False, tile_x: int = None, tile_y: int = None,
+                  tile_color: TileColor = None) -> bool:
+        """
+        コマを移動する（オプションでタイル配置も可能）
+        
+        Args:
+            from_x, from_y: 移動元の位置
+            to_x, to_y: 移動先の位置
+            place_tile: タイルを配置するかどうか
+            tile_x, tile_y: タイル配置位置
+            tile_color: タイルの色
+            
+        Returns:
+            移動が有効だったかどうか
+        """
+        # タイルを配置する場合
+        if place_tile and tile_x is not None and tile_y is not None and tile_color is not None:
+            if not self.place_tile(tile_x, tile_y, tile_color):
+                return False
+        
+        # 移動が有効かチェック
+        valid_moves = self.get_valid_moves(from_x, from_y)
+        if (to_x, to_y) not in valid_moves:
+            return False
+        
+        # 移動先に相手のコマがないことを確認
+        target_piece = self.board.get_piece(to_x, to_y)
+        if target_piece is not None:
+            return False
+        
+        # コマを移動
+        if self.board.move_piece(from_x, from_y, to_x, to_y):
+            self.move_history.append({
+                'player': self.current_player,
+                'from': (from_x, from_y),
+                'to': (to_x, to_y),
+                'tile_placed': (tile_x, tile_y, tile_color) if place_tile else None
+            })
+            
+            # 勝利条件をチェック
+            self._check_win_condition()
+            
+            # プレイヤー交代
+            if not self.game_over:
+                self.current_player = Player.PLAYER2 if self.current_player == Player.PLAYER1 else Player.PLAYER1
+            
+            return True
+        
+        return False
+    
+    def _check_win_condition(self):
+        """勝利条件をチェック：相手の陣地に到達"""
+        # プレイヤー1が相手の陣地（y=0）に到達
+        for x in range(self.board.size):
+            piece = self.board.get_piece(x, 0)
+            if piece and piece.owner == Player.PLAYER1:
+                self.game_over = True
+                self.winner = Player.PLAYER1
+                return
+        
+        # プレイヤー2が相手の陣地（y=4）に到達
+        for x in range(self.board.size):
+            piece = self.board.get_piece(x, self.board.size - 1)
+            if piece and piece.owner == Player.PLAYER2:
+                self.game_over = True
+                self.winner = Player.PLAYER2
+                return
+    
+    def display_game_state(self):
+        """ゲーム状態を表示"""
+        print("\n" + "="*40)
+        print(f"コントラスト - 現在のプレイヤー: Player {self.current_player.value}")
+        print("="*40)
+        
+        # タイル残数を表示
+        p1_tiles = self.tiles_remaining[Player.PLAYER1]
+        p2_tiles = self.tiles_remaining[Player.PLAYER2]
+        print(f"Player 1 タイル残数: 黒■×{p1_tiles['black']} グレー▦×{p1_tiles['gray']}")
+        print(f"Player 2 タイル残数: 黒■×{p2_tiles['black']} グレー▦×{p2_tiles['gray']}")
+        print()
+        
+        self.board.display()
+        
+        if self.game_over:
+            print(f"\nゲーム終了！勝者: Player {self.winner.value}")
+        print()
+
+
+
+def main():
+    """ゲームのデモンストレーション"""
+    print("コントラスト - ボードゲームシミュレーション")
+    print("="*50)
+    
+    # ゲームを初期化（5x5ボード）
+    game = ContrastGame(board_size=5)
+    game.setup_initial_position()
+    
+    # 初期状態を表示
+    game.display_game_state()
+    
+    # デモの移動
+    print("デモ: いくつかの移動を実行します...\n")
+    
+    # Player 1がタイルを配置してから移動
+    print("移動 1: Player 1 が黒タイルを(2,3)に配置し、(2,4)から(2,3)へ移動")
+    if game.place_tile(2, 3, TileColor.BLACK):
+        print("  黒タイル配置成功")
+    game.display_game_state()
+    
+    moves = [
+        # (from_x, from_y, to_x, to_y)
+        (2, 4, 2, 3),  # Player 1（黒タイル上なので次は斜めにしか動けない）
+        (2, 0, 2, 1),  # Player 2
+    ]
+    
+    for i, (fx, fy, tx, ty) in enumerate(moves, 2):
+        if game.game_over:
+            break
+        
+        print(f"\n移動 {i}: Player {game.current_player.value} が ({fx}, {fy}) から ({tx}, {ty}) へ移動")
+        
+        valid_moves = game.get_valid_moves(fx, fy)
+        print(f"有効な移動先: {valid_moves}")
+        
+        if game.make_move(fx, fy, tx, ty):
+            game.display_game_state()
+        else:
+            print("無効な移動です！")
+    
+    # ゲームの説明
+    print("\n" + "="*50)
+    print("ゲームのルール:")
+    print("="*50)
+    print("1. 5×5の盤面で各プレイヤー5つのコマを持つ")
+    print("2. 通常は白いタイル(□)で、縦横1マスに移動可能")
+    print("3. 各プレイヤーは特殊タイルを持っている:")
+    print("   - 黒タイル(■) × 3: コマが斜め1マスのみ移動可能")
+    print("   - グレータイル(▦) × 1: コマが8方向すべてに移動可能")
+    print("4. タイルは一度配置すると移動できない")
+    print("5. 勝利条件: 相手の陣地（最初の列）に到達する")
+    print("="*50)
+
+
+if __name__ == "__main__":
+    main()
