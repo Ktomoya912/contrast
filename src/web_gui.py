@@ -10,6 +10,7 @@ from flask import Flask, jsonify, render_template, request
 
 from ac_learning import ActorCriticLearner
 from contrast_game import ContrastGame, Player, TileColor
+from rule_based_player import RuleBasedPlayer
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ game_state = {
     "ai_enabled": False,
     "ai_player": None,
     "ai_learner": None,
+    "rule_enabled": False,
+    "rule_player": None,
+    "rule_player_obj": None,
     "selected_piece": None,
     "selected_tile_color": None,
     "tile_to_place": None,
@@ -44,7 +48,7 @@ def init_game():
 
 
 def get_game_data():
-    """ゲーム状態をJSON形式で取得"""
+    """ゲーム状態をJSON形式で取得（NumPy int64対応）"""
     game = game_state["game"]
 
     # ボード状態
@@ -56,19 +60,19 @@ def get_game_data():
             tile = game.board.get_tile_color(x, y)
 
             cell = {
-                "x": x,
-                "y": y,
-                "tile": tile.value,
-                "piece": piece.owner.value if piece else None,
+                "x": int(x),  # int64からPython intに変換
+                "y": int(y),
+                "tile": tile.value,  # enum値（文字列）をそのまま返す
+                "piece": int(piece.owner.value) if piece else None,
             }
             row.append(cell)
         board.append(row)
 
     return {
         "board": board,
-        "current_player": game.current_player.value,
+        "current_player": int(game.current_player.value),
         "game_over": game.game_over,
-        "winner": game.winner.value if game.winner else None,
+        "winner": int(game.winner.value) if game.winner else None,
         "tiles_remaining": {
             "player1": game.tiles_remaining[Player.PLAYER1],
             "player2": game.tiles_remaining[Player.PLAYER2],
@@ -79,7 +83,13 @@ def get_game_data():
         else None,
         "tile_to_place": game_state["tile_to_place"],
         "ai_enabled": game_state["ai_enabled"],
-        "ai_player": game_state["ai_player"].value if game_state["ai_player"] else None,
+        "ai_player": int(game_state["ai_player"].value)
+        if game_state["ai_player"]
+        else None,
+        "rule_enabled": game_state["rule_enabled"],
+        "rule_player": int(game_state["rule_player"].value)
+        if game_state["rule_player"]
+        else None,
         "move_made": game_state["move_made"],
         "moved_from": game_state["moved_from"],
         "moved_to": game_state["moved_to"],
@@ -116,6 +126,8 @@ def api_valid_moves():
 
     game = game_state["game"]
     valid_moves = game.get_valid_moves(x, y)
+    # NumPy int64をPython intに変換
+    valid_moves = [(int(mx), int(my)) for mx, my in valid_moves]
 
     return jsonify({"success": True, "valid_moves": valid_moves})
 
@@ -133,6 +145,8 @@ def api_select_piece():
     if piece and piece.owner == game.current_player:
         game_state["selected_piece"] = (x, y)
         valid_moves = game.get_valid_moves(x, y)
+        # NumPy int64をPython intに変換
+        valid_moves = [(int(mx), int(my)) for mx, my in valid_moves]
         return jsonify(
             {"success": True, "valid_moves": valid_moves, "data": get_game_data()}
         )
@@ -206,17 +220,28 @@ def api_end_turn():
         game_state["selected_tile_color"] = None
         game_state["tile_to_place"] = None
 
-        # AIのターンかチェック
+        # AI or ルールベースのターンかチェック
         ai_move_data = None
-        if (
-            game_state["ai_enabled"]
-            and not game.game_over
-            and game.current_player == game_state["ai_player"]
-        ):
-            ai_move_data = execute_ai_move()
+        rule_move_data = None
+        if not game.game_over:
+            if (
+                game_state["ai_enabled"]
+                and game.current_player == game_state["ai_player"]
+            ):
+                ai_move_data = execute_ai_move()
+            elif (
+                game_state["rule_enabled"]
+                and game.current_player == game_state["rule_player"]
+            ):
+                rule_move_data = execute_rule_move()
 
         return jsonify(
-            {"success": True, "data": get_game_data(), "ai_move": ai_move_data}
+            {
+                "success": True,
+                "data": get_game_data(),
+                "ai_move": ai_move_data,
+                "rule_move": rule_move_data,
+            }
         )
     else:
         return jsonify({"success": False, "error": "ターン終了に失敗しました"})
@@ -289,20 +314,27 @@ def api_place_tile():
         game_state["selected_tile_color"] = None
         game_state["tile_to_place"] = None
 
-        # AIのターンかチェック
+        # AI or ルールベースのターンかチェック
         ai_move_data = None
-        if (
-            game_state["ai_enabled"]
-            and not game.game_over
-            and game.current_player == game_state["ai_player"]
-        ):
-            ai_move_data = execute_ai_move()
+        rule_move_data = None
+        if not game.game_over:
+            if (
+                game_state["ai_enabled"]
+                and game.current_player == game_state["ai_player"]
+            ):
+                ai_move_data = execute_ai_move()
+            elif (
+                game_state["rule_enabled"]
+                and game.current_player == game_state["rule_player"]
+            ):
+                rule_move_data = execute_rule_move()
 
         return jsonify(
             {
                 "success": True,
                 "data": get_game_data(),
                 "ai_move": ai_move_data,
+                "rule_move": rule_move_data,
                 "message": "タイルを配置してターン終了しました",
             }
         )
@@ -374,6 +406,52 @@ def api_toggle_ai():
         )
 
 
+@app.route("/api/toggle_rule", methods=["POST"])
+def api_toggle_rule():
+    """ルールベースプレイヤーを有効/無効化"""
+    data = request.json
+    enable = data.get("enable", False)
+    player = data.get("player", 2)
+
+    if enable:
+        try:
+            rule_player = Player.PLAYER1 if player == 1 else Player.PLAYER2
+            rule_player_obj = RuleBasedPlayer(rule_player)
+
+            game_state["rule_enabled"] = True
+            game_state["rule_player"] = rule_player
+            game_state["rule_player_obj"] = rule_player_obj
+
+            # ルールベースが先手の場合、すぐに手を打つ
+            rule_move_data = None
+            if game_state["game"].current_player == game_state["rule_player"]:
+                rule_move_data = execute_rule_move()
+
+            return jsonify(
+                {
+                    "success": True,
+                    "message": f"ルールベースプレイヤー (Player {player}) を有効化しました",
+                    "data": get_game_data(),
+                    "rule_move": rule_move_data,
+                }
+            )
+        except Exception as e:
+            return jsonify(
+                {"success": False, "error": f"ルールベース読み込みエラー: {str(e)}"}
+            )
+    else:
+        game_state["rule_enabled"] = False
+        game_state["rule_player"] = None
+        game_state["rule_player_obj"] = None
+        return jsonify(
+            {
+                "success": True,
+                "message": "ルールベースを無効化しました",
+                "data": get_game_data(),
+            }
+        )
+
+
 def execute_ai_move():
     """AIの手を実行"""
     try:
@@ -397,15 +475,53 @@ def execute_ai_move():
             )
 
             return {
-                "from": (from_x, from_y),
-                "to": (to_x, to_y),
-                "tile": (tile_x, tile_y, tile_color.value) if place_tile else None,
+                "from": (int(from_x), int(from_y)),
+                "to": (int(to_x), int(to_y)),
+                "tile": (int(tile_x), int(tile_y), tile_color.value)
+                if place_tile
+                else None,
             }
         else:
             logger.warning("AIに有効な手がありません")
             return None
     except Exception as e:
         logger.error(f"AI実行エラー: {e}")
+        return None
+
+
+def execute_rule_move():
+    """ルールベースプレイヤーの手を実行"""
+    try:
+        action = game_state["rule_player_obj"].select_action(game_state["game"])
+
+        if action:
+            move_tuple, tile_tuple = action
+            from_x, from_y, to_x, to_y = move_tuple
+
+            # タイル配置情報を処理
+            if tile_tuple is None:
+                place_tile = False
+                tile_x, tile_y, tile_color = None, None, None
+            else:
+                place_tile = True
+                tile_color, tile_x, tile_y = tile_tuple
+
+            game_state["game"].make_move(
+                from_x, from_y, to_x, to_y, place_tile, tile_x, tile_y, tile_color
+            )
+
+            return {
+                "from": (int(from_x), int(from_y)),
+                "to": (int(to_x), int(to_y)),
+                "tile": (int(tile_x), int(tile_y), tile_color.value)
+                if place_tile
+                else None,
+            }
+        else:
+            logger.warning("ルールベースに有効な手がありません")
+            return None
+    except Exception as e:
+        logger.error(f"ルールベース実行エラー: {e}")
         return None
 
 

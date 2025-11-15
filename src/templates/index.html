@@ -286,6 +286,7 @@
             <div class="tile-buttons">
                 <button class="btn-reset" onclick="resetGame()">ゲームリセット</button>
                 <button id="btn-ai" class="btn-ai" onclick="toggleAI()">AI有効化</button>
+                <button id="btn-rule" class="btn-ai" onclick="toggleRule()">ルールベース有効化</button>
             </div>
         </div>
 
@@ -310,11 +311,31 @@
             </div>
             <div style="text-align: left; margin: 10px 0;">
                 <label>モデル:</label><br>
-                <input type="text" id="model-path" value="contrast_ac.pth" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc;">
+                <input type="text" id="model-path" value="contrast_ac_mixed.pth" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc;">
             </div>
             <div class="modal-buttons">
                 <button class="btn-reset" onclick="confirmAI()">OK</button>
                 <button class="btn-cancel" onclick="closeAIModal()">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ルールベースモーダル -->
+    <div id="rule-modal" class="modal">
+        <div class="modal-content">
+            <h2>ルールベースプレイヤー設定</h2>
+            <p>ルールベースがプレイするプレイヤーを選択</p>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="rule-player" value="1"> Player 1
+                </label>
+                <label>
+                    <input type="radio" name="rule-player" value="2" checked> Player 2
+                </label>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-reset" onclick="confirmRule()">OK</button>
+                <button class="btn-cancel" onclick="closeRuleModal()">キャンセル</button>
             </div>
         </div>
     </div>
@@ -395,19 +416,21 @@
             // タイルボタン
             const p = gameState.current_player === 1 ? 'player1' : 'player2';
             const aiTurn = gameState.ai_enabled && gameState.ai_player === gameState.current_player;
+            const ruleTurn = gameState.rule_enabled && gameState.rule_player === gameState.current_player;
+            const computerTurn = aiTurn || ruleTurn;
             const moveMade = gameState.move_made;
             
             // 移動完了後のみタイル配置とターン終了ボタンを有効化
             document.getElementById('btn-black-tile').disabled = 
-                !moveMade || gameState.tiles_remaining[p].black <= 0 || selectedTileColor || aiTurn;
+                !moveMade || gameState.tiles_remaining[p].black <= 0 || selectedTileColor || computerTurn;
             document.getElementById('btn-gray-tile').disabled = 
-                !moveMade || gameState.tiles_remaining[p].gray <= 0 || selectedTileColor || aiTurn;
+                !moveMade || gameState.tiles_remaining[p].gray <= 0 || selectedTileColor || computerTurn;
             document.getElementById('btn-cancel-tile').disabled = 
                 !selectedTileColor;
             
             // ターン終了ボタン
             const endTurnBtn = document.getElementById('btn-end-turn');
-            if (moveMade && !aiTurn) {
+            if (moveMade && !computerTurn) {
                 endTurnBtn.style.display = 'block';
                 endTurnBtn.disabled = false;
             } else {
@@ -417,6 +440,10 @@
             // AIボタン
             document.getElementById('btn-ai').textContent = 
                 gameState.ai_enabled ? 'AI無効化' : 'AI有効化';
+            
+            // ルールベースボタン
+            document.getElementById('btn-rule').textContent = 
+                gameState.rule_enabled ? 'ルールベース無効化' : 'ルールベース有効化';
 
             // ゲーム終了
             if (gameState.game_over) {
@@ -551,8 +578,8 @@
                 renderBoard();
                 updateUI();
                 
-                // AIの手を待つ
-                if (result.ai_move) {
+                // AIまたはルールベースの手を待つ
+                if (result.ai_move || result.rule_move) {
                     setTimeout(() => fetchState(), 500);
                 }
             } else {
@@ -577,8 +604,8 @@
                 renderBoard();
                 updateUI();
                 
-                // AIの手を待つ
-                if (result.ai_move) {
+                // AIまたはルールベースの手を待つ
+                if (result.ai_move || result.rule_move) {
                     setTimeout(() => fetchState(), 500);
                 }
             } else {
@@ -661,6 +688,60 @@
 
         async function disableAI() {
             const response = await fetch('/api/toggle_ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enable: false })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                gameState = result.data;
+                updateUI();
+            }
+        }
+
+        // ルールベースプレイヤー制御
+        function toggleRule() {
+            if (gameState.rule_enabled) {
+                disableRule();
+            } else {
+                document.getElementById('rule-modal').style.display = 'flex';
+            }
+        }
+
+        function closeRuleModal() {
+            document.getElementById('rule-modal').style.display = 'none';
+        }
+
+        async function confirmRule() {
+            const player = parseInt(document.querySelector('input[name="rule-player"]:checked').value);
+            
+            closeRuleModal();
+
+            const response = await fetch('/api/toggle_rule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enable: true, player })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                alert(result.message);
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+
+                // ルールベースの手を待つ
+                if (result.rule_move) {
+                    setTimeout(() => fetchState(), 500);
+                }
+            } else {
+                alert(result.error);
+            }
+        }
+
+        async function disableRule() {
+            const response = await fetch('/api/toggle_rule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enable: false })

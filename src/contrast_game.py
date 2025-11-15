@@ -6,6 +6,8 @@
 from enum import Enum
 from typing import List, Optional, Tuple
 
+import numpy as np
+
 
 class TileColor(Enum):
     """タイルの色"""
@@ -37,7 +39,7 @@ class Piece:
 
 
 class Board:
-    """ゲームボード（5x5）"""
+    """ゲームボード（5x5）- NumPy最適化版"""
 
     def __init__(self, size: int = 5):
         """
@@ -45,20 +47,22 @@ class Board:
             size: ボードのサイズ（size x size）
         """
         self.size = size
-        # 全マスは初期状態で白
-        self.tiles: List[List[TileColor]] = [
-            [TileColor.WHITE for _ in range(size)] for _ in range(size)
-        ]
+        # タイルをNumPy配列で管理（0=WHITE, 1=BLACK, 2=GRAY）
+        self.tiles = np.zeros((size, size), dtype=np.int8)
 
-        # コマの配置（初期状態は空）
-        self.pieces: List[List[Optional[Piece]]] = [
-            [None for _ in range(size)] for _ in range(size)
-        ]
+        # コマをNumPy配列で管理（0=なし, 1=PLAYER1, 2=PLAYER2）
+        self.pieces = np.zeros((size, size), dtype=np.int8)
+
+        # タイルとプレイヤーのマッピング
+        self._tile_map = {0: TileColor.WHITE, 1: TileColor.BLACK, 2: TileColor.GRAY}
+        self._tile_rmap = {TileColor.WHITE: 0, TileColor.BLACK: 1, TileColor.GRAY: 2}
+        self._player_map = {0: None, 1: Player.PLAYER1, 2: Player.PLAYER2}
+        self._player_rmap = {None: 0, Player.PLAYER1: 1, Player.PLAYER2: 2}
 
     def get_tile_color(self, x: int, y: int) -> TileColor:
         """指定位置のタイル色を取得"""
         if 0 <= x < self.size and 0 <= y < self.size:
-            return self.tiles[y][x]
+            return self._tile_map[self.tiles[y, x]]
         raise ValueError(f"Invalid position: ({x}, {y})")
 
     def set_tile_color(self, x: int, y: int, color: TileColor) -> bool:
@@ -73,7 +77,7 @@ class Board:
             設定に成功したかどうか
         """
         if 0 <= x < self.size and 0 <= y < self.size:
-            self.tiles[y][x] = color
+            self.tiles[y, x] = self._tile_rmap[color]
             return True
         return False
 
@@ -89,15 +93,16 @@ class Board:
             配置に成功したかどうか
         """
         if 0 <= x < self.size and 0 <= y < self.size:
-            if self.pieces[y][x] is None:
-                self.pieces[y][x] = piece
+            if self.pieces[y, x] == 0:
+                self.pieces[y, x] = self._player_rmap[piece.owner]
                 return True
         return False
 
     def get_piece(self, x: int, y: int) -> Optional[Piece]:
         """指定位置のコマを取得"""
         if 0 <= x < self.size and 0 <= y < self.size:
-            return self.pieces[y][x]
+            player = self._player_map[self.pieces[y, x]]
+            return Piece(player) if player else None
         return None
 
     def move_piece(self, from_x: int, from_y: int, to_x: int, to_y: int) -> bool:
@@ -111,51 +116,43 @@ class Board:
         Returns:
             移動に成功したかどうか
         """
-        piece = self.get_piece(from_x, from_y)
-        if piece is None:
+        if self.pieces[from_y, from_x] == 0:
             return False
 
         if 0 <= to_x < self.size and 0 <= to_y < self.size:
-            self.pieces[to_y][to_x] = piece
-            self.pieces[from_y][from_x] = None
+            self.pieces[to_y, to_x] = self.pieces[from_y, from_x]
+            self.pieces[from_y, from_x] = 0
             return True
         return False
 
     def remove_piece(self, x: int, y: int):
         """コマを盤から取り除く"""
         if 0 <= x < self.size and 0 <= y < self.size:
-            self.pieces[y][x] = None
+            self.pieces[y, x] = 0
 
     def display(self):
-        """ボードの状態を表示"""
+        """ボードの状態を表示（NumPy最適化版）"""
         print("  ", end="")
         for i in range(self.size):
             print(f" {i} ", end="")
         print()
 
+        # タイルマーカー
+        tile_markers = {0: "□", 1: "■", 2: "▦"}
+
         for y in range(self.size):
             print(f"{y} ", end="")
             for x in range(self.size):
-                piece = self.pieces[y][x]
-                tile_color = self.tiles[y][x]
+                piece_id = self.pieces[y, x]
+                tile_id = self.tiles[y, x]
+                tile_marker = tile_markers[tile_id]
 
-                if piece is None:
-                    # タイルの色に応じて表示
-                    if tile_color == TileColor.WHITE:
-                        print("[□]", end="")
-                    elif tile_color == TileColor.BLACK:
-                        print("[■]", end="")
-                    else:  # GRAY
-                        print("[▦]", end="")
+                if piece_id == 0:
+                    # コマなし：タイルのみ表示
+                    print(f"[{tile_marker}]", end="")
                 else:
-                    # コマを表示
-                    player_marker = str(piece.owner.value)
-                    if tile_color == TileColor.WHITE:
-                        print(f"[{player_marker}□]", end="")
-                    elif tile_color == TileColor.BLACK:
-                        print(f"[{player_marker}■]", end="")
-                    else:  # GRAY
-                        print(f"[{player_marker}▦]", end="")
+                    # コマあり：プレイヤー番号 + タイル
+                    print(f"[{piece_id}{tile_marker}]", end="")
             print()
 
 
@@ -196,7 +193,7 @@ class ContrastGame:
 
     def get_valid_moves(self, x: int, y: int) -> List[Tuple[int, int]]:
         """
-        指定位置のコマが移動可能なマスのリストを取得
+        指定位置のコマが移動可能なマスのリストを取得（NumPy最適化版）
         ルール：自分のコマは飛び越えられる（複数でも可）、相手のコマは飛び越えられない
 
         Args:
@@ -205,33 +202,25 @@ class ContrastGame:
         Returns:
             移動可能な位置のリスト [(x, y), ...]
         """
-        piece = self.board.get_piece(x, y)
-        if piece is None or piece.owner != self.current_player:
+        # 所有者チェック（NumPy配列で高速化）
+        player_id = self.board._player_rmap[self.current_player]
+        if self.board.pieces[y, x] != player_id:
             return []
 
         # 現在のマスのタイル色を取得
-        tile_color = self.board.get_tile_color(x, y)
+        tile_id = self.board.tiles[y, x]
+
+        # 方向を決定
+        if tile_id == 0:  # WHITE
+            directions = np.array([(0, -1), (0, 1), (-1, 0), (1, 0)])
+        elif tile_id == 1:  # BLACK
+            directions = np.array([(-1, -1), (1, -1), (-1, 1), (1, 1)])
+        else:  # GRAY
+            directions = np.array(
+                [(0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, -1), (-1, 1), (1, 1)]
+            )
 
         valid_moves = []
-
-        if tile_color == TileColor.WHITE:
-            # 白タイル：縦横1マス
-            directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-        elif tile_color == TileColor.BLACK:
-            # 黒タイル：斜め1マス
-            directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
-        else:  # GRAY
-            # グレータイル：8方向すべて
-            directions = [
-                (0, -1),
-                (0, 1),
-                (-1, 0),
-                (1, 0),
-                (-1, -1),
-                (1, -1),
-                (-1, 1),
-                (1, 1),
-            ]
 
         for dx, dy in directions:
             # その方向に進む（自分のコマを飛び越える）
@@ -248,13 +237,13 @@ class ContrastGame:
                 ):
                     break
 
-                target_piece = self.board.get_piece(next_x, next_y)
+                target_piece_id = self.board.pieces[next_y, next_x]
 
-                if target_piece is None:
+                if target_piece_id == 0:
                     # 空マスに到達：ここが移動先候補
                     valid_moves.append((next_x, next_y))
                     break
-                elif target_piece.owner == self.current_player:
+                elif target_piece_id == player_id:
                     # 自分のコマは飛び越える
                     current_x, current_y = next_x, next_y
                     continue
@@ -381,40 +370,40 @@ class ContrastGame:
         return True
 
     def _check_win_condition(self):
-        """勝利条件をチェック：相手の陣地に到達"""
+        """勝利条件をチェック：相手の陣地に到達（NumPy最適化版）"""
         # プレイヤー1が相手の陣地（y=0）に到達
-        for x in range(self.board.size):
-            piece = self.board.get_piece(x, 0)
-            if piece and piece.owner == Player.PLAYER1:
-                self.game_over = True
-                self.winner = Player.PLAYER1
-                return
+        player1_id = self.board._player_rmap[Player.PLAYER1]
+        if np.any(self.board.pieces[0, :] == player1_id):
+            self.game_over = True
+            self.winner = Player.PLAYER1
+            return
 
         # プレイヤー2が相手の陣地（y=4）に到達
-        for x in range(self.board.size):
-            piece = self.board.get_piece(x, self.board.size - 1)
-            if piece and piece.owner == Player.PLAYER2:
-                self.game_over = True
-                self.winner = Player.PLAYER2
-                return
+        player2_id = self.board._player_rmap[Player.PLAYER2]
+        if np.any(self.board.pieces[self.board.size - 1, :] == player2_id):
+            self.game_over = True
+            self.winner = Player.PLAYER2
+            return
 
     def _check_no_valid_moves(self):
         """
-        現在のプレイヤーが動けない状態かチェック
+        現在のプレイヤーが動けない状態かチェック（NumPy最適化版）
         ルール：自分のコマが動かせない場合は負け
         """
         if self.game_over:
             return
 
         # 現在のプレイヤーのすべてのコマについて、合法手があるかチェック
-        for y in range(self.board.size):
-            for x in range(self.board.size):
-                piece = self.board.get_piece(x, y)
-                if piece and piece.owner == self.current_player:
-                    valid_moves = self.get_valid_moves(x, y)
-                    if len(valid_moves) > 0:
-                        # 動ける手が1つでもあれば続行
-                        return
+        player_id = self.board._player_rmap[self.current_player]
+        # NumPy配列で該当プレイヤーのコマ位置を取得
+        player_positions = np.argwhere(self.board.pieces == player_id)
+
+        for pos in player_positions:
+            y, x = pos
+            valid_moves = self.get_valid_moves(x, y)
+            if len(valid_moves) > 0:
+                # 動ける手が1つでもあれば続行
+                return
 
         # どのコマも動けない場合は負け
         self.game_over = True

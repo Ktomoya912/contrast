@@ -470,47 +470,6 @@ class ActorCriticLearner:
                     reward = 0.0
                 else:
                     reward = -1.0
-            else:
-                # 中間ステップ：前進報酬
-                reward = 0.0
-
-                # 前進したかチェック（プレイヤーのゴール方向に近づいたか）
-                if i + 1 < len(episode_data):
-                    # 次のステップの移動情報を取得
-                    next_move_idx = episode_data[i][1]
-                    from_x, from_y, direction = self.index_to_move(next_move_idx)
-
-                    # プレイヤー1は下から上（y座標が減る）、プレイヤー2は上から下（y座標が増える）
-                    if player == Player.PLAYER1:
-                        # Player 1のゴールはy=0なので、yが減れば前進
-                        directions = [
-                            (-1, -1),
-                            (-1, 0),
-                            (-1, 1),
-                            (0, -1),
-                            (0, 1),
-                            (1, -1),
-                            (1, 0),
-                            (1, 1),
-                        ]
-                        dx, dy = directions[direction]
-                        if dy < 0:  # y方向に上へ移動
-                            reward = 0.05
-                    else:  # Player.PLAYER2
-                        # Player 2のゴールはy=4なので、yが増えれば前進
-                        directions = [
-                            (-1, -1),
-                            (-1, 0),
-                            (-1, 1),
-                            (0, -1),
-                            (0, 1),
-                            (1, -1),
-                            (1, 0),
-                            (1, 1),
-                        ]
-                        dx, dy = directions[direction]
-                        if dy > 0:  # y方向に下へ移動
-                            reward = 0.05
 
             # リターン（累積報酬）
             G = reward + self.discount_factor * G
