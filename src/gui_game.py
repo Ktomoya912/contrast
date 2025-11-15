@@ -156,14 +156,13 @@ class ContrastGUI:
         help_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         help_text = """
-1. タイルを配置する場合は
+1. 移動するコマをクリック
+
+2. 移動先をクリック（緑色）
+
+3. タイルを配置する場合は
    ボタンを押してからマスをクリック
-
-2. 移動するコマをクリック
-
-3. 移動先をクリック
-
-4. 緑色のマスが移動可能な場所
+   （配置は任意）
         """
         tk.Label(
             help_frame, text=help_text, justify=tk.LEFT, bg="#FFFFFF", font=("Arial", 9)
@@ -372,7 +371,7 @@ class ContrastGUI:
         self.update_display()
 
     def select_tile(self, tile_color: TileColor):
-        """タイルを選択"""
+        """タイルを選択（コマ移動後に配置）"""
         tiles_remaining = self.game.tiles_remaining[self.game.current_player]
 
         if tile_color == TileColor.BLACK and tiles_remaining["black"] <= 0:
@@ -387,21 +386,34 @@ class ContrastGUI:
         self.cancel_tile_btn.config(state=tk.NORMAL)
 
         tile_name = "黒タイル" if tile_color == TileColor.BLACK else "グレータイル"
-        self.status_label.config(text=f"{tile_name}を配置する位置を選択してください")
+        self.status_label.config(
+            text=f"{tile_name}を配置する位置を選択してください（任意）"
+        )
 
         self.update_tile_buttons()
 
     def place_tile_at(self, x: int, y: int):
-        """タイルを配置"""
+        """タイル配置位置を記録"""
+        # コマやタイルがある場所には配置できない
+        if self.game.board.get_piece(x, y) is not None:
+            messagebox.showwarning("警告", "コマがある場所にはタイルを配置できません")
+            return
+
         if self.game.board.get_tile_color(x, y) != TileColor.WHITE:
-            messagebox.showwarning("警告", "そこにはタイルを配置できません")
+            messagebox.showwarning("警告", "既にタイルが配置されています")
             return
 
         self.tile_to_place = (x, y)
-        self.selected_tile_color = None
+        tile_name = (
+            "黒タイル"
+            if self.selected_tile_color == TileColor.BLACK
+            else "グレータイル"
+        )
+        self.status_label.config(
+            text=f"{tile_name}を ({x},{y}) に配置予定 - 続けてターン終了またはキャンセル"
+        )
         self.cancel_tile_btn.config(state=tk.NORMAL)
 
-        self.status_label.config(text="移動するコマを選択してください")
         self.update_tile_buttons()
         self.update_display()
 
@@ -417,11 +429,13 @@ class ContrastGUI:
         self.update_display()
 
     def move_piece_to(self, to_x: int, to_y: int):
-        """コマを移動"""
+        """コマを移動（移動後にタイル配置の選択肢を提供）"""
         from_x, from_y = self.selected_piece
 
         # タイル配置情報
-        place_tile = self.tile_to_place is not None
+        place_tile = (
+            self.tile_to_place is not None and self.selected_tile_color is not None
+        )
         tile_x = self.tile_to_place[0] if place_tile else None
         tile_y = self.tile_to_place[1] if place_tile else None
         tile_color = self.selected_tile_color if place_tile else None
@@ -520,11 +534,12 @@ class ContrastGUI:
             self.gray_tile_btn.config(state=tk.DISABLED)
             return
 
-        # タイル配置中または既に配置済みの場合は無効化
-        if self.tile_to_place or self.selected_tile_color:
+        # タイル選択中の場合は無効化
+        if self.selected_tile_color:
             self.black_tile_btn.config(state=tk.DISABLED)
             self.gray_tile_btn.config(state=tk.DISABLED)
         else:
+            # タイル配置予定でもボタンは有効（変更可能）
             self.black_tile_btn.config(
                 state=tk.NORMAL if tiles["black"] > 0 else tk.DISABLED
             )

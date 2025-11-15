@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>コントラスト - ボードゲーム</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            max-width: 1200px;
+            display: flex;
+            gap: 30px;
+        }
+
+        .left-panel {
+            min-width: 250px;
+        }
+
+        .info-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .info-section h3 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .current-player {
+            font-size: 20px;
+            font-weight: bold;
+            text-align: center;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .player1 { background: #4A90E2; color: white; }
+        .player2 { background: #E24A4A; color: white; }
+
+        .tile-info {
+            font-size: 14px;
+            margin: 5px 0;
+        }
+
+        .tile-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        button {
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-black {
+            background: #333;
+            color: white;
+        }
+
+        .btn-gray {
+            background: #888;
+            color: white;
+        }
+
+        .btn-cancel {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .btn-end-turn {
+            background: #4A90E2;
+            color: white;
+        }
+
+        .btn-reset {
+            background: #51cf66;
+            color: white;
+        }
+
+        .btn-ai {
+            background: #ffd93d;
+            color: #333;
+        }
+
+        .board-container {
+            position: relative;
+        }
+
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(5, 80px);
+            grid-template-rows: repeat(5, 80px);
+            gap: 2px;
+            background: #ccc;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .cell {
+            width: 80px;
+            height: 80px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .cell:hover {
+            opacity: 0.9;
+        }
+
+        .cell.white { background: #f5f5f5; }
+        .cell.black { background: #333; }
+        .cell.gray { background: #888; }
+        .cell.valid-move { background: #90ee90 !important; }
+        .cell.selected { box-shadow: inset 0 0 0 4px #ffd700; }
+        .cell.tile-preview { box-shadow: inset 0 0 0 4px #ffa500; }
+
+        .piece {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .piece.player1 { background: #4A90E2; }
+        .piece.player2 { background: #E24A4A; }
+
+        .status-bar {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .help-text {
+            font-size: 12px;
+            line-height: 1.6;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 20px 0;
+            text-align: left;
+        }
+
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .radio-group label:hover {
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <div class="info-section">
+                <div id="current-player" class="current-player">Player 1 のターン</div>
+                <div class="tile-info">
+                    <strong>Player 1</strong><br>
+                    黒タイル: <span id="p1-black">3</span><br>
+                    グレータイル: <span id="p1-gray">1</span>
+                </div>
+                <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                <div class="tile-info">
+                    <strong>Player 2</strong><br>
+                    黒タイル: <span id="p2-black">3</span><br>
+                    グレータイル: <span id="p2-gray">1</span>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h3>タイル配置</h3>
+                <div class="tile-buttons">
+                    <button id="btn-black-tile" class="btn-black" onclick="selectTile('black')">黒タイル (■)</button>
+                    <button id="btn-gray-tile" class="btn-gray" onclick="selectTile('gray')">グレータイル (▦)</button>
+                    <button id="btn-cancel-tile" class="btn-cancel" onclick="cancelTile()" disabled>配置キャンセル</button>
+                    <button id="btn-end-turn" class="btn-end-turn" onclick="endTurn()" style="display:none;">ターン終了</button>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h3>操作方法</h3>
+                <div class="help-text">
+                    1. 移動するコマをクリック<br>
+                    2. 移動先をクリック（緑色）<br>
+                    3. 「ターン終了」または「タイル配置」を選択
+                </div>
+            </div>
+
+            <div class="tile-buttons">
+                <button class="btn-reset" onclick="resetGame()">ゲームリセット</button>
+                <button id="btn-ai" class="btn-ai" onclick="toggleAI()">AI有効化</button>
+            </div>
+        </div>
+
+        <div class="board-container">
+            <div id="game-board"></div>
+            <div id="status-bar" class="status-bar">Player 1 のターン</div>
+        </div>
+    </div>
+
+    <!-- AIモーダル -->
+    <div id="ai-modal" class="modal">
+        <div class="modal-content">
+            <h2>AI設定</h2>
+            <p>AIがプレイするプレイヤーを選択</p>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="ai-player" value="1"> Player 1
+                </label>
+                <label>
+                    <input type="radio" name="ai-player" value="2" checked> Player 2
+                </label>
+            </div>
+            <div style="text-align: left; margin: 10px 0;">
+                <label>モデル:</label><br>
+                <input type="text" id="model-path" value="contrast_ac.pth" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc;">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-reset" onclick="confirmAI()">OK</button>
+                <button class="btn-cancel" onclick="closeAIModal()">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let gameState = null;
+        let selectedPiece = null;
+        let validMoves = [];
+        let selectedTileColor = null;
+        let tileToPlace = null;
+
+        // ゲーム状態を取得
+        async function fetchState() {
+            const response = await fetch('/api/state');
+            const result = await response.json();
+            if (result.success) {
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+            }
+        }
+
+        // ボードを描画
+        function renderBoard() {
+            const board = document.getElementById('game-board');
+            board.innerHTML = '';
+
+            for (let y = 0; y < 5; y++) {
+                for (let x = 0; x < 5; x++) {
+                    const cell = gameState.board[y][x];
+                    const div = document.createElement('div');
+                    div.className = `cell ${cell.tile}`;
+                    div.dataset.x = x;
+                    div.dataset.y = y;
+                    div.onclick = () => onCellClick(x, y);
+
+                    // 選択されたコマ
+                    if (selectedPiece && selectedPiece[0] === x && selectedPiece[1] === y) {
+                        div.classList.add('selected');
+                    }
+
+                    // 有効な移動先
+                    if (validMoves.some(m => m[0] === x && m[1] === y)) {
+                        div.classList.add('valid-move');
+                    }
+
+                    // タイル配置予定地
+                    if (tileToPlace && tileToPlace[0] === x && tileToPlace[1] === y) {
+                        div.classList.add('tile-preview');
+                    }
+
+                    // コマ
+                    if (cell.piece) {
+                        const piece = document.createElement('div');
+                        piece.className = `piece player${cell.piece}`;
+                        piece.textContent = cell.piece;
+                        div.appendChild(piece);
+                    }
+
+                    board.appendChild(div);
+                }
+            }
+        }
+
+        // UIを更新
+        function updateUI() {
+            // 現在のプレイヤー
+            const playerDiv = document.getElementById('current-player');
+            playerDiv.textContent = `Player ${gameState.current_player} のターン`;
+            playerDiv.className = `current-player player${gameState.current_player}`;
+
+            // タイル残数
+            document.getElementById('p1-black').textContent = gameState.tiles_remaining.player1.black;
+            document.getElementById('p1-gray').textContent = gameState.tiles_remaining.player1.gray;
+            document.getElementById('p2-black').textContent = gameState.tiles_remaining.player2.black;
+            document.getElementById('p2-gray').textContent = gameState.tiles_remaining.player2.gray;
+
+            // タイルボタン
+            const p = gameState.current_player === 1 ? 'player1' : 'player2';
+            const aiTurn = gameState.ai_enabled && gameState.ai_player === gameState.current_player;
+            const moveMade = gameState.move_made;
+            
+            // 移動完了後のみタイル配置とターン終了ボタンを有効化
+            document.getElementById('btn-black-tile').disabled = 
+                !moveMade || gameState.tiles_remaining[p].black <= 0 || selectedTileColor || aiTurn;
+            document.getElementById('btn-gray-tile').disabled = 
+                !moveMade || gameState.tiles_remaining[p].gray <= 0 || selectedTileColor || aiTurn;
+            document.getElementById('btn-cancel-tile').disabled = 
+                !selectedTileColor;
+            
+            // ターン終了ボタン
+            const endTurnBtn = document.getElementById('btn-end-turn');
+            if (moveMade && !aiTurn) {
+                endTurnBtn.style.display = 'block';
+                endTurnBtn.disabled = false;
+            } else {
+                endTurnBtn.style.display = 'none';
+            }
+
+            // AIボタン
+            document.getElementById('btn-ai').textContent = 
+                gameState.ai_enabled ? 'AI無効化' : 'AI有効化';
+
+            // ゲーム終了
+            if (gameState.game_over) {
+                const winner = gameState.winner;
+                document.getElementById('status-bar').textContent = 
+                    winner ? `Player ${winner} の勝利！` : '引き分け';
+                alert(`ゲーム終了！${winner ? `Player ${winner} の勝利！` : '引き分け'}`);
+            } else if (selectedTileColor) {
+                document.getElementById('status-bar').textContent = 
+                    'タイルを配置する位置を選択してください';
+            } else if (moveMade) {
+                document.getElementById('status-bar').textContent = 
+                    '「ターン終了」または「タイル配置」を選択してください';
+            } else if (selectedPiece) {
+                document.getElementById('status-bar').textContent = 
+                    `移動先を選択してください（移動可能: ${validMoves.length}箇所）`;
+            } else {
+                document.getElementById('status-bar').textContent = 
+                    `Player ${gameState.current_player} のターン`;
+            }
+        }
+
+        // セルクリック
+        async function onCellClick(x, y) {
+            if (gameState.game_over) return;
+            if (gameState.ai_enabled && gameState.ai_player === gameState.current_player) return;
+            if (gameState.move_made && !selectedTileColor) return; // 移動完了後はタイル配置モードのみ
+
+            // タイル配置モード
+            if (selectedTileColor) {
+                await placeTileAt(x, y);
+                return;
+            }
+
+            // コマ選択または移動
+            const cell = gameState.board[y][x];
+            
+            if (selectedPiece) {
+                // 移動先を選択
+                if (validMoves.some(m => m[0] === x && m[1] === y)) {
+                    await moveToCell(x, y);
+                } else if (cell.piece === gameState.current_player) {
+                    // 別のコマを選択
+                    await selectPiece(x, y);
+                } else {
+                    // 選択解除
+                    selectedPiece = null;
+                    validMoves = [];
+                    renderBoard();
+                    updateUI();
+                }
+            } else {
+                // コマを選択
+                if (cell.piece === gameState.current_player) {
+                    await selectPiece(x, y);
+                }
+            }
+        }
+
+        // コマを選択
+        async function selectPiece(x, y) {
+            const response = await fetch('/api/select_piece', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ x, y })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedPiece = [x, y];
+                validMoves = result.valid_moves;
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+            }
+        }
+
+        // コマを移動
+        async function moveToCell(x, y) {
+            const response = await fetch('/api/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ to_x: x, to_y: y })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedPiece = null;
+                validMoves = [];
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+                alert(result.message || 'コマを移動しました。ターン終了またはタイル配置を選択してください');
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // タイルを選択
+        async function selectTile(type) {
+            const response = await fetch('/api/select_tile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tile_type: type })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedTileColor = type;
+                gameState = result.data;
+                updateUI();
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // タイル配置（自動でターン終了）
+        async function placeTileAt(x, y) {
+            const response = await fetch('/api/place_tile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ x, y })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedPiece = null;
+                validMoves = [];
+                selectedTileColor = null;
+                tileToPlace = null;
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+                
+                // AIの手を待つ
+                if (result.ai_move) {
+                    setTimeout(() => fetchState(), 500);
+                }
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // ターン終了
+        async function endTurn() {
+            const response = await fetch('/api/end_turn', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedPiece = null;
+                validMoves = [];
+                selectedTileColor = null;
+                tileToPlace = null;
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+                
+                // AIの手を待つ
+                if (result.ai_move) {
+                    setTimeout(() => fetchState(), 500);
+                }
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // タイル配置キャンセル
+        async function cancelTile() {
+            const response = await fetch('/api/cancel_tile', { method: 'POST' });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedTileColor = null;
+                tileToPlace = null;
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+            }
+        }
+
+        // ゲームリセット
+        async function resetGame() {
+            if (!confirm('ゲームをリセットしますか？')) return;
+            
+            const response = await fetch('/api/init', { method: 'POST' });
+            const result = await response.json();
+            
+            if (result.success) {
+                selectedPiece = null;
+                validMoves = [];
+                selectedTileColor = null;
+                tileToPlace = null;
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+            }
+        }
+
+        // AI切り替え
+        function toggleAI() {
+            if (gameState.ai_enabled) {
+                disableAI();
+            } else {
+                document.getElementById('ai-modal').style.display = 'flex';
+            }
+        }
+
+        function closeAIModal() {
+            document.getElementById('ai-modal').style.display = 'none';
+        }
+
+        async function confirmAI() {
+            const player = parseInt(document.querySelector('input[name="ai-player"]:checked').value);
+            const modelPath = document.getElementById('model-path').value;
+            
+            closeAIModal();
+
+            const response = await fetch('/api/toggle_ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enable: true, player, model_path: modelPath })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                alert(result.message);
+                gameState = result.data;
+                renderBoard();
+                updateUI();
+
+                // AIの手を待つ
+                if (result.ai_move) {
+                    setTimeout(() => fetchState(), 500);
+                }
+            } else {
+                alert(result.error);
+            }
+        }
+
+        async function disableAI() {
+            const response = await fetch('/api/toggle_ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enable: false })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                gameState = result.data;
+                updateUI();
+            }
+        }
+
+        // 初期化
+        fetchState();
+    </script>
+</body>
+</html>
