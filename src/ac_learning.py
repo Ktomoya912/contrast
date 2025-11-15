@@ -3,7 +3,6 @@ Actor-Critic学習アルゴリズム
 PolicyとValueを同時に学習してコントラストゲームのAIを訓練
 """
 
-import copy
 import logging
 from typing import List, Optional, Tuple
 
@@ -11,11 +10,6 @@ import numpy as np
 
 from ai_model import ActorCriticNetwork, board_to_tensor
 from contrast_game import ContrastGame, Player, TileColor
-
-# ロギング基本設定
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 
 # ロガー設定
 logger = logging.getLogger(__name__)
@@ -29,7 +23,7 @@ class ActorCriticLearner:
     def __init__(
         self,
         board_size: int = 5,
-        max_actions: int = 500,
+        max_actions: int = 500,  # 互換性のため残すが使用しない
         learning_rate: float = 0.0003,
         discount_factor: float = 0.99,
         use_cuda: bool = False,
@@ -37,14 +31,17 @@ class ActorCriticLearner:
         """
         Args:
             board_size: ボードのサイズ
-            max_actions: 最大行動数
+            max_actions: 互換性のため残すが使用しない
             learning_rate: 学習率
             discount_factor: 割引率（γ）
             use_cuda: CUDAを使用するか
         """
         self.board_size = board_size
-        self.max_actions = max_actions
         self.discount_factor = discount_factor
+
+        # 新しい行動空間
+        self.max_move_actions = board_size * board_size * 8  # 200
+        self.max_tile_actions = 31  # なし1 + 黒15 + グレー15
 
         # Actor-Criticネットワーク
         self.network = ActorCriticNetwork(
@@ -56,6 +53,82 @@ class ActorCriticLearner:
         self.player1_wins = 0
         self.player2_wins = 0
         self.episode_rewards = []
+
+    def move_to_index(self, from_x: int, from_y: int, direction: int) -> int:
+        """
+        移動をインデックスに変換
+
+        Args:
+            from_x, from_y: 移動元の座標
+            direction: 移動方向 (0-7: 8方向)
+
+        Returns:
+            インデックス (0-199)
+        """
+        return from_y * self.board_size * 8 + from_x * 8 + direction
+
+    def index_to_move(self, index: int) -> Tuple[int, int, int]:
+        """
+        インデックスを移動に変換
+
+        Returns:
+            (from_x, from_y, direction)
+        """
+        direction = index % 8
+        index //= 8
+        from_x = index % self.board_size
+        from_y = index // self.board_size
+        return from_x, from_y, direction
+
+    def tile_to_index(self, tile_action: Optional[Tuple]) -> int:
+        """
+        タイル配置をインデックスに変換
+
+        Args:
+            tile_action: None または (tile_color, x, y)
+
+        Returns:
+            インデックス (0=なし, 1-15=黒, 16-30=グレー)
+        """
+        if tile_action is None or tile_action[0] is None:
+            return 0
+
+        tile_color, x, y = tile_action
+        position_index = y * self.board_size + x
+
+        # 15箇所に制限
+        if position_index >= 15:
+            position_index = position_index % 15
+
+        if tile_color == TileColor.BLACK:
+            return 1 + position_index
+        elif tile_color == TileColor.GRAY:
+            return 16 + position_index
+        else:
+            return 0
+
+    def index_to_tile(self, index: int) -> Optional[Tuple]:
+        """
+        インデックスをタイル配置に変換
+
+        Returns:
+            None または (tile_color, x, y)
+        """
+        if index == 0:
+            return None
+
+        if 1 <= index <= 15:
+            position_index = index - 1
+            tile_color = TileColor.BLACK
+        elif 16 <= index <= 30:
+            position_index = index - 16
+            tile_color = TileColor.GRAY
+        else:
+            return None
+
+        x = position_index % self.board_size
+        y = position_index // self.board_size
+        return (tile_color, x, y)
 
     def action_to_tuple(self, action_index: int) -> Optional[Tuple]:
         """
@@ -77,114 +150,199 @@ class ActorCriticLearner:
         # get_legal_moves から選択する方式にします
         return None
 
-    def get_legal_moves(self, game: ContrastGame) -> List[Tuple]:
+    def get_legal_moves(self, game: ContrastGame) -> List[Tuple[int, int, int, int]]:
         """
-        現在の局面での合法手をすべて取得
+        合法な移動のリストを取得（タイル配置は別途）
 
         Returns:
-            [(from_x, from_y, to_x, to_y, place_tile, tile_x, tile_y, tile_color), ...]
+            [(from_x, from_y, to_x, to_y), ...]
         """
         legal_moves = []
 
-        # タイル配置のオプション
-        tile_options = [(False, None, None, None)]  # タイル配置なし
-
-        tiles_remaining = game.tiles_remaining[game.current_player]
-
-        # 黒タイルの配置オプション
-        if tiles_remaining["black"] > 0:
-            for y in range(self.board_size):
-                for x in range(self.board_size):
-                    if game.board.get_tile_color(x, y) == TileColor.WHITE:
-                        tile_options.append((True, x, y, TileColor.BLACK))
-
-        # グレータイルの配置オプション
-        if tiles_remaining["gray"] > 0:
-            for y in range(self.board_size):
-                for x in range(self.board_size):
-                    if game.board.get_tile_color(x, y) == TileColor.WHITE:
-                        tile_options.append((True, x, y, TileColor.GRAY))
-
-        # 各コマの移動オプション
         for from_y in range(self.board_size):
             for from_x in range(self.board_size):
                 piece = game.board.get_piece(from_x, from_y)
                 if piece and piece.owner == game.current_player:
-                    # タイルオプションごとに有効な移動を確認
-                    for place_tile, tile_x, tile_y, tile_color in tile_options:
-                        # 一時的なゲーム状態をコピー
-                        temp_game = copy.deepcopy(game)
+                    # 有効な移動先を取得
+                    valid_moves = game.get_valid_moves(from_x, from_y)
 
-                        # タイルを配置（該当する場合）
-                        if place_tile:
-                            temp_game.board.set_tile_color(tile_x, tile_y, tile_color)
-
-                        # 有効な移動先を取得
-                        valid_moves = temp_game.get_valid_moves(from_x, from_y)
-
-                        for to_x, to_y in valid_moves:
-                            legal_moves.append(
-                                (
-                                    from_x,
-                                    from_y,
-                                    to_x,
-                                    to_y,
-                                    place_tile,
-                                    tile_x,
-                                    tile_y,
-                                    tile_color,
-                                )
-                            )
+                    for to_x, to_y in valid_moves:
+                        legal_moves.append((from_x, from_y, to_x, to_y))
 
         return legal_moves
 
-    def create_action_mask(self, legal_moves: List[Tuple]) -> np.ndarray:
+    def get_legal_tiles(self, game: ContrastGame) -> List[int]:
         """
-        合法手マスクを作成
-
-        Args:
-            legal_moves: 合法手のリスト
+        合法なタイル配置のインデックスリストを取得
 
         Returns:
-            (max_actions,) のブールマスク
+            [0(なし), 1-15(黒), 16-30(グレー)]
         """
-        mask = np.zeros(self.max_actions, dtype=bool)
-        # 簡易実装: 最初のN個の行動を合法とする
-        num_legal = min(len(legal_moves), self.max_actions)
-        mask[:num_legal] = True
+        legal_tiles = [0]  # タイル配置なしは常に合法
+
+        tiles_remaining = game.tiles_remaining[game.current_player]
+
+        # 盤面上の空きマスを確認
+        for y in range(self.board_size):
+            for x in range(self.board_size):
+                # コマがある場所にはタイルを置けない
+                if game.board.get_piece(x, y) is not None:
+                    continue
+
+                # 既存のタイル（白以外）がある場所には置けない
+                if game.board.get_tile_color(x, y) != TileColor.WHITE:
+                    continue
+
+                position_index = y * self.board_size + x
+                if position_index >= 15:
+                    position_index = position_index % 15
+
+                # 黒タイルが残っていれば追加
+                if tiles_remaining["black"] > 0:
+                    legal_tiles.append(1 + position_index)
+
+                # グレータイルが残っていれば追加
+                if tiles_remaining["gray"] > 0:
+                    legal_tiles.append(16 + position_index)
+
+        return list(set(legal_tiles))  # 重複削除
+
+    def create_move_mask(
+        self, legal_moves: List[Tuple[int, int, int, int]]
+    ) -> np.ndarray:
+        """
+        移動の合法手マスクを作成
+
+        Returns:
+            (max_move_actions,) のブールマスク
+        """
+        mask = np.zeros(self.max_move_actions, dtype=bool)
+
+        # 8方向ベクトル
+        directions = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+
+        for from_x, from_y, to_x, to_y in legal_moves:
+            # 移動方向を判定
+            dx = np.sign(to_x - from_x)
+            dy = np.sign(to_y - from_y)
+
+            try:
+                direction = directions.index((dx, dy))
+                index = self.move_to_index(from_x, from_y, direction)
+                if 0 <= index < self.max_move_actions:
+                    mask[index] = True
+            except ValueError:
+                # 方向が見つからない場合はスキップ
+                continue
+
         return mask
 
-    def select_action(self, game: ContrastGame) -> Optional[Tuple[int, Tuple]]:
+    def create_tile_mask(self, legal_tiles: List[int]) -> np.ndarray:
         """
-        Policyネットワークを使って行動選択
+        タイル配置の合法手マスクを作成
+
+        Returns:
+            (max_tile_actions,) のブールマスク
+        """
+        mask = np.zeros(self.max_tile_actions, dtype=bool)
+        for index in legal_tiles:
+            if 0 <= index < self.max_tile_actions:
+                mask[index] = True
+        return mask
+
+    def select_action(
+        self, game: ContrastGame
+    ) -> Optional[Tuple[int, int, Tuple, Tuple]]:
+        """
+        移動PolicyとタイルPolicyを使って行動選択
 
         Args:
             game: 現在のゲーム状態
 
         Returns:
-            (action_index, action_tuple) または None
+            (move_index, tile_index, move_tuple, tile_tuple) または None
+            move_tuple: (from_x, from_y, to_x, to_y)
+            tile_tuple: None or (tile_color, x, y)
         """
         legal_moves = self.get_legal_moves(game)
+        legal_tiles = self.get_legal_tiles(game)
 
         if not legal_moves:
             return None
 
         # 盤面の状態を取得
         state = board_to_tensor(game)
-        action_mask = self.create_action_mask(legal_moves)
+        move_mask = self.create_move_mask(legal_moves)
+        tile_mask = self.create_tile_mask(legal_tiles)
 
         # Policyから行動確率を取得
-        policy_probs, value = self.network.evaluate(state, action_mask)
+        move_probs, tile_probs, value = self.network.evaluate(
+            state, move_mask, tile_mask
+        )
 
-        # 合法手の範囲で確率分布を正規化
-        num_legal = min(len(legal_moves), self.max_actions)
-        legal_probs = policy_probs[:num_legal]
-        legal_probs = legal_probs / legal_probs.sum()
+        # 移動を選択
+        move_indices = np.where(move_mask)[0]
+        if len(move_indices) == 0:
+            return None
 
-        # 確率分布に従ってサンプリング
-        action_index = np.random.choice(num_legal, p=legal_probs)
+        move_probs_masked = move_probs[move_mask]
+        if move_probs_masked.sum() > 0:
+            move_probs_masked = move_probs_masked / move_probs_masked.sum()
+        else:
+            move_probs_masked = np.ones(len(move_probs_masked)) / len(move_probs_masked)
 
-        return action_index, legal_moves[action_index]
+        move_index = np.random.choice(move_indices, p=move_probs_masked)
+
+        # タイル配置を選択
+        tile_probs_masked = tile_probs[tile_mask]
+        if tile_probs_masked.sum() > 0:
+            tile_probs_masked = tile_probs_masked / tile_probs_masked.sum()
+        else:
+            tile_probs_masked = np.ones(len(tile_probs_masked)) / len(tile_probs_masked)
+
+        tile_index = np.random.choice(legal_tiles, p=tile_probs_masked)
+
+        # インデックスを行動に変換
+        # 移動は8方向なので実際の移動先を計算
+        from_x, from_y, direction = self.index_to_move(move_index)
+        directions = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+        dx, dy = directions[direction]
+
+        # legal_movesから対応する移動を見つける
+        move_tuple = None
+        for lm in legal_moves:
+            if lm[0] == from_x and lm[1] == from_y:
+                lm_dx = np.sign(lm[2] - lm[0])
+                lm_dy = np.sign(lm[3] - lm[1])
+                if lm_dx == dx and lm_dy == dy:
+                    move_tuple = lm
+                    break
+
+        if move_tuple is None:
+            # 見つからない場合は最初の合法手を使う
+            move_tuple = legal_moves[0]
+
+        tile_tuple = self.index_to_tile(tile_index)
+
+        return move_index, tile_index, move_tuple, tile_tuple
 
     def play_game(self, train: bool = True) -> Tuple[Player, List]:
         """
@@ -200,7 +358,7 @@ class ActorCriticLearner:
         game.setup_initial_position()
 
         # エピソードの記録
-        episode_data = []  # (state, action_index, action_mask, value, player)
+        episode_data = []  # (state, move_index, tile_index, move_mask, tile_mask, value, player)
 
         move_count = 0
         max_moves = 200  # 無限ループ防止
@@ -223,17 +381,25 @@ class ActorCriticLearner:
                 )
                 break
 
-            action_index, action_tuple = action_result
-            from_x, from_y, to_x, to_y, place_tile, tile_x, tile_y, tile_color = (
-                action_tuple
-            )
+            move_index, tile_index, move_tuple, tile_tuple = action_result
+            from_x, from_y, to_x, to_y = move_tuple
 
             # 合法手マスクを取得
             legal_moves = self.get_legal_moves(game)
-            action_mask = self.create_action_mask(legal_moves)
+            legal_tiles = self.get_legal_tiles(game)
+            move_mask = self.create_move_mask(legal_moves)
+            tile_mask = self.create_tile_mask(legal_tiles)
 
             # 現在の価値を取得
-            _, value = self.network.evaluate(current_state, action_mask)
+            _, _, value = self.network.evaluate(current_state, move_mask, tile_mask)
+
+            # タイル配置情報を準備
+            if tile_tuple is None:
+                place_tile = False
+                tile_x, tile_y, tile_color = None, None, None
+            else:
+                place_tile = True
+                tile_color, tile_x, tile_y = tile_tuple
 
             # 行動実行
             game.make_move(
@@ -242,7 +408,15 @@ class ActorCriticLearner:
 
             # 状態、行動、マスク、価値を記録
             episode_data.append(
-                (current_state, action_index, action_mask, value, current_player)
+                (
+                    current_state,
+                    move_index,
+                    tile_index,
+                    move_mask,
+                    tile_mask,
+                    value,
+                    current_player,
+                )
             )
 
             move_count += 1
@@ -273,18 +447,19 @@ class ActorCriticLearner:
 
         # Advantageと目標値を計算
         states = []
-        action_indices = []
-        action_masks = []
+        move_indices = []
+        tile_indices = []
+        move_masks = []
+        tile_masks = []
         advantages = []
         value_targets = []
-
-        # 終端報酬
-        final_reward = 0.0
 
         # 逆順に処理してリターンを計算
         G = 0.0
         for i in range(len(episode_data) - 1, -1, -1):
-            state, action_idx, action_mask, value, player = episode_data[i]
+            state, move_idx, tile_idx, move_mask, tile_mask, value, player = (
+                episode_data[i]
+            )
 
             # 報酬の計算
             if i == len(episode_data) - 1:
@@ -296,8 +471,46 @@ class ActorCriticLearner:
                 else:
                     reward = -1.0
             else:
-                # 中間ステップ: 小さなステップ報酬
+                # 中間ステップ：前進報酬
                 reward = 0.0
+
+                # 前進したかチェック（プレイヤーのゴール方向に近づいたか）
+                if i + 1 < len(episode_data):
+                    # 次のステップの移動情報を取得
+                    next_move_idx = episode_data[i][1]
+                    from_x, from_y, direction = self.index_to_move(next_move_idx)
+
+                    # プレイヤー1は下から上（y座標が減る）、プレイヤー2は上から下（y座標が増える）
+                    if player == Player.PLAYER1:
+                        # Player 1のゴールはy=0なので、yが減れば前進
+                        directions = [
+                            (-1, -1),
+                            (-1, 0),
+                            (-1, 1),
+                            (0, -1),
+                            (0, 1),
+                            (1, -1),
+                            (1, 0),
+                            (1, 1),
+                        ]
+                        dx, dy = directions[direction]
+                        if dy < 0:  # y方向に上へ移動
+                            reward = 0.05
+                    else:  # Player.PLAYER2
+                        # Player 2のゴールはy=4なので、yが増えれば前進
+                        directions = [
+                            (-1, -1),
+                            (-1, 0),
+                            (-1, 1),
+                            (0, -1),
+                            (0, 1),
+                            (1, -1),
+                            (1, 0),
+                            (1, 1),
+                        ]
+                        dx, dy = directions[direction]
+                        if dy > 0:  # y方向に下へ移動
+                            reward = 0.05
 
             # リターン（累積報酬）
             G = reward + self.discount_factor * G
@@ -306,26 +519,36 @@ class ActorCriticLearner:
             advantage = G - value
 
             states.append(state)
-            action_indices.append(action_idx)
-            action_masks.append(action_mask)
+            move_indices.append(move_idx)
+            tile_indices.append(tile_idx)
+            move_masks.append(move_mask)
+            tile_masks.append(tile_mask)
             advantages.append(advantage)
             value_targets.append(G)
 
         # 順序を戻す
         states.reverse()
-        action_indices.reverse()
-        action_masks.reverse()
+        move_indices.reverse()
+        tile_indices.reverse()
+        move_masks.reverse()
+        tile_masks.reverse()
         advantages.reverse()
         value_targets.reverse()
 
         # 学習
         if len(states) > 0:
-            p_loss, v_loss, t_loss = self.network.train_step(
-                states, action_indices, action_masks, advantages, value_targets
+            m_loss, t_loss, v_loss, total_loss = self.network.train_step(
+                states,
+                move_indices,
+                tile_indices,
+                move_masks,
+                tile_masks,
+                advantages,
+                value_targets,
             )
-            return p_loss, v_loss, t_loss
+            return m_loss, t_loss, v_loss, total_loss
 
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
 
     def train(
         self,
@@ -345,7 +568,7 @@ class ActorCriticLearner:
         logger.info("=" * 60)
 
         for episode in range(num_episodes):
-            p_loss, v_loss, t_loss = self.train_episode()
+            m_loss, t_loss, v_loss, total_loss = self.train_episode()
 
             # 定期的に統計を表示
             if (episode + 1) % 10 == 0:
@@ -358,7 +581,7 @@ class ActorCriticLearner:
 
                 logger.info(
                     f"Episode {episode + 1}/{num_episodes} | "
-                    f"P_Loss: {p_loss:.4f} | V_Loss: {v_loss:.4f} | T_Loss: {t_loss:.4f} | "
+                    f"M_Loss: {m_loss:.4f} | T_Loss: {t_loss:.4f} | V_Loss: {v_loss:.4f} | Total: {total_loss:.4f} | "
                     f"P1: {win_rate_p1:.2%} | P2: {win_rate_p2:.2%}"
                 )
 
@@ -369,7 +592,7 @@ class ActorCriticLearner:
 
         # 最終モデルを保存
         self.network.save(model_path)
-        logger.info("\n学習完了！")
+        logger.info("学習完了！")
         logger.info(f"総ゲーム数: {self.game_count}")
         logger.info(f"Player 1 勝率: {self.player1_wins / self.game_count:.2%}")
         logger.info(f"Player 2 勝率: {self.player2_wins / self.game_count:.2%}")

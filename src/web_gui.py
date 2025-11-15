@@ -11,10 +11,6 @@ from flask import Flask, jsonify, render_template, request
 from ac_learning import ActorCriticLearner
 from contrast_game import ContrastGame, Player, TileColor
 
-# ロギング設定
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -384,10 +380,17 @@ def execute_ai_move():
         action_result = game_state["ai_learner"].select_action(game_state["game"])
 
         if action_result:
-            action_index, action_tuple = action_result
-            from_x, from_y, to_x, to_y, place_tile, tile_x, tile_y, tile_color = (
-                action_tuple
-            )
+            # 新しいインターフェース: (move_index, tile_index, move_tuple, tile_tuple)
+            move_index, tile_index, move_tuple, tile_tuple = action_result
+            from_x, from_y, to_x, to_y = move_tuple
+
+            # タイル配置情報を処理
+            if tile_tuple is None:
+                place_tile = False
+                tile_x, tile_y, tile_color = None, None, None
+            else:
+                place_tile = True
+                tile_color, tile_x, tile_y = tile_tuple
 
             game_state["game"].make_move(
                 from_x, from_y, to_x, to_y, place_tile, tile_x, tile_y, tile_color

@@ -356,7 +356,7 @@ class TDLearner:
 
         # 最終モデルを保存
         self.value_network.save(model_path)
-        print("\n学習完了！")
+        print("学習完了！")
         print(f"総ゲーム数: {self.game_count}")
         print(f"Player 1 勝率: {self.player1_wins / self.game_count:.2%}")
         print(f"Player 2 勝率: {self.player2_wins / self.game_count:.2%}")

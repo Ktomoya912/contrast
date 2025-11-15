@@ -424,7 +424,7 @@ class ContrastGame:
 
     def display_game_state(self):
         """ゲーム状態を表示"""
-        print("\n" + "=" * 40)
+        print("=" * 40)
         print(f"コントラスト - 現在のプレイヤー: Player {self.current_player.value}")
         print("=" * 40)
 
@@ -442,7 +442,7 @@ class ContrastGame:
         self.board.display()
 
         if self.game_over:
-            print(f"\nゲーム終了！勝者: Player {self.winner.value}")
+            print(f"ゲーム終了！勝者: Player {self.winner.value}")
         print()
 
 
@@ -478,7 +478,7 @@ def main():
             break
 
         print(
-            f"\n移動 {i}: Player {game.current_player.value} が ({fx}, {fy}) から ({tx}, {ty}) へ移動"
+            f"移動 {i}: Player {game.current_player.value} が ({fx}, {fy}) から ({tx}, {ty}) へ移動"
         )
 
         valid_moves = game.get_valid_moves(fx, fy)
@@ -490,7 +490,7 @@ def main():
             print("無効な移動です！")
 
     # ゲームの説明
-    print("\n" + "=" * 50)
+    print("" + "=" * 50)
     print("ゲームのルール:")
     print("=" * 50)
     print("1. 5×5の盤面で各プレイヤー5つのコマを持つ")

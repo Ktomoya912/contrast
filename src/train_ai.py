@@ -127,7 +127,7 @@ def main():
             model_path=args.model_path,
         )
     except KeyboardInterrupt:
-        print("\n\n学習を中断しました")
+        print("学習を中断しました")
         save = input("現在のモデルを保存しますか？ (y/n): ").strip().lower()
         if save in ["y", "yes"]:
             learner.value_network.save(args.model_path)
@@ -137,9 +137,9 @@ def main():
     if args.plot:
         plot_training_progress(learner, "training_progress.png")
 
-    print("\n学習完了！")
+    print("学習完了！")
     print(f"モデルは {args.model_path} に保存されました")
-    print("\n次のコマンドでAIと対戦できます:")
+    print("次のコマンドでAIと対戦できます:")
     print("  python3 play_with_ai.py")
 
 

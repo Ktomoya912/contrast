@@ -12,11 +12,6 @@ from typing import List, Optional, Tuple
 from ac_learning import ActorCriticLearner
 from contrast_game import ContrastGame, Player, TileColor
 
-# ロギング基本設定
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-
 # ロガー設定
 logger = logging.getLogger(__name__)
 
